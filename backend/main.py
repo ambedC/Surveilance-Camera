@@ -46,7 +46,18 @@ def load_custom_model(path: str):
     # import YOLO here to avoid heavy import at module load time
     from ultralytics import YOLO
     model = YOLO(path)
-    print(f"Loaded custom YOLOv8 model from {path}")
+    
+    # Connect model to GPU
+    try:
+        import torch
+        if torch.cuda.is_available():
+            model.to('cuda')
+            print(f"Loaded custom YOLOv8 model from {path} on GPU (CUDA)")
+        else:
+            print(f"Loaded custom YOLOv8 model from {path} (CUDA not available, falling back to CPU)")
+    except Exception as e:
+        print(f"Loaded custom YOLOv8 model from {path} (error connecting to GPU: {e})")
+        
     return model
 
 # For now we disable model loading completely to avoid numpy/ultralytics crashes
@@ -167,28 +178,20 @@ def calculate_box_center(box):
 
 def calculate_movement_distance(prev_boxes_dict, curr_id, curr_box):
     """Calculate exact movement distance for a tracked moving object by its ID.
-    If the tracker drops the ID during a fight (occlusion), falls back to the nearest box in the previous frame."""
-    curr_center = calculate_box_center(curr_box)
-    
-    if curr_id in prev_boxes_dict:
-        prev_box = prev_boxes_dict[curr_id]
-        prev_center = calculate_box_center(prev_box)
-        return math.sqrt((curr_center[0] - prev_center[0])**2 + 
-                         (curr_center[1] - prev_center[1])**2)
-                         
-    # Fallback if tracker lost ID
-    if not prev_boxes_dict:
+    Returns the movement as a PERCENTAGE of their body size to ensure scale invariance (e.g., phones shown to webcams).
+    Strictly relies on tracking IDs to avoid false positives by accidentally tracking neighbors when IDs flicker."""
+    if curr_id not in prev_boxes_dict:
         return 0.0
         
-    min_distance = float('inf')
-    for prev_box in prev_boxes_dict.values():
-        prev_center = calculate_box_center(prev_box)
-        distance = math.sqrt((curr_center[0] - prev_center[0])**2 + 
-                             (curr_center[1] - prev_center[1])**2)
-        if distance < min_distance:
-            min_distance = distance
-            
-    return min_distance if min_distance != float('inf') else 0.0
+    curr_center = calculate_box_center(curr_box)
+    curr_diag = math.sqrt((curr_box[2] - curr_box[0])**2 + (curr_box[3] - curr_box[1])**2)
+    if curr_diag < 1: curr_diag = 1.0
+    
+    prev_box = prev_boxes_dict[curr_id]
+    prev_center = calculate_box_center(prev_box)
+    distance = math.sqrt((curr_center[0] - prev_center[0])**2 + (curr_center[1] - prev_center[1])**2)
+    
+    return (distance / curr_diag) * 100.0
 
 def check_fight_with_movement(person_dets_dict, prev_person_boxes_dict, overlap_tracker, 
                              movement_threshold=25, min_overlap_duration=0.5):
@@ -208,7 +211,7 @@ def check_fight_with_movement(person_dets_dict, prev_person_boxes_dict, overlap_
     current_overlaps = set()
     
     person_ids = list(person_dets_dict.keys())
-    
+
     if len(person_ids) >= 2:
         for idx1 in range(len(person_ids)):
             for idx2 in range(idx1 + 1, len(person_ids)):
@@ -237,16 +240,21 @@ def check_fight_with_movement(person_dets_dict, prev_person_boxes_dict, overlap_
                     # Get overlap duration
                     overlap_duration = overlap_tracker.get_overlap_duration(id1, id2)
                     
-                    # Only consider fight if overlap is sustained
-                    if overlap_duration >= min_overlap_duration:
-                        # Calculate exact movement for both tracked persons
-                        movement_1 = calculate_movement_distance(prev_person_boxes_dict, id1, box1)
-                        movement_2 = calculate_movement_distance(prev_person_boxes_dict, id2, box2)
-                        
-                        # Fight only if at least one person has fast, aggressive movement
-                        if movement_1 > movement_threshold or movement_2 > movement_threshold:
-                            fighting = True
-                            overlap_tracker.mark_fight_detected()
+                    # Always calculate exact movement for both tracked persons
+                    movement_1 = calculate_movement_distance(prev_person_boxes_dict, id1, box1)
+                    movement_2 = calculate_movement_distance(prev_person_boxes_dict, id2, box2)
+                    
+                    # The fight is ONLY detected when boxes overlap for > min_overlap_duration
+                    # AND the combined movement of both people represents a violent struggle.
+                    sustained_overlap = (overlap_duration >= min_overlap_duration)
+                    
+                    # Calculate "kinetic energy" of the overlap (sum of both movements).
+                    # A threshold of ~20-25% combined movement perfectly catches asymmetrical fights.
+                    active_struggle = (movement_1 + movement_2) > (movement_threshold * 1.5)
+                    
+                    if sustained_overlap and active_struggle:
+                        fighting = True
+                        overlap_tracker.mark_fight_detected()
     
     # If not currently detecting fight conditions, check if still in cooldown
     if not fighting and overlap_tracker.is_in_fight_cooldown():
@@ -420,8 +428,8 @@ async def websocket_endpoint(ws: WebSocket):
     last_animal_count = 0
     last_fighting = False
     
-    movement_threshold = 15  # 15 pixels over 3 frames (0.1s) is 150 px/s, which indicates an aggressive fight/struggle.
-    min_overlap_duration = 2.0  # Must overlap for at least 3.0 seconds (not just walking by)
+    movement_threshold = 7.5  # 7.5% movement of body size in ~0.1s
+    min_overlap_duration = 2.0  # Must overlap for at least 2.0 seconds
 
     while True:
         ret, frame = cap.read()
@@ -620,7 +628,7 @@ async def websocket_webcam(ws: WebSocket):
 
     prev_person_boxes = {}
     overlap_tracker = OverlapTracker()
-    movement_threshold = 15
+    movement_threshold = 7.5
     min_overlap_duration = 2.0
     
     frame_counter = 0

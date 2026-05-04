@@ -7,6 +7,9 @@ import Register from './pages/Register';
 import RegistrationPending from './pages/RegistrationPending';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
+import { Toaster } from 'sonner';
+import LoadingScreen from './components/LoadingScreen';
+import { useState, useEffect } from 'react';
 
 function ProtectedRoute({ children }) {
   const isAuthenticated = localStorage.getItem('authenticated') === 'true';
@@ -14,8 +17,19 @@ function ProtectedRoute({ children }) {
 }
 
 function App() {
+  const [initializing, setInitializing] = useState(true);
+
+  useEffect(() => {
+    // Simulate initialization
+    const timer = setTimeout(() => setInitializing(false), 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (initializing) return <LoadingScreen />;
+
   return (
     <Router>
+      <Toaster richColors position="top-right" closeButton />
       <Routes>
         {/* Auth Routes */}
         <Route path="/login" element={<Login />} />

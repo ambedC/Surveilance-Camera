@@ -1,0 +1,14 @@
+__pycache__/
+.venv/
+.git/
+.env
+frontend/
+node_modules/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.ipynb_checkpoints/
+backend/__pycache__/
+backend/uploads/*
+!backend/uploads/.gitkeep

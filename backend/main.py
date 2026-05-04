@@ -19,11 +19,15 @@ import time
 
 app = FastAPI(title="Threat Detection API")
 
+# CORS Settings
+origins = os.getenv("CORS_ORIGINS", "*").split(",")
+
 app.add_middleware(
-CORSMiddleware,
-allow_origins=["*"],
-allow_methods=["*"],
-allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Include authentication router

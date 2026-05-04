@@ -33,6 +33,7 @@ class User(Base):
     phone_number = Column(String(32), unique=True, nullable=False, index=True)
     password_hash = Column(String(512), nullable=False)
     status = Column(SAEnum(UserStatus), default=UserStatus.PENDING, nullable=False)
+    is_admin = Column(Integer, default=0, nullable=False)  # 1 for admin, 0 for regular user
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def verify_password(self, password: str) -> bool:

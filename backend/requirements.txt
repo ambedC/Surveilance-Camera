@@ -9,3 +9,4 @@ twilio
 pydantic
 sqlalchemy
 email-validator
+ultralytics
